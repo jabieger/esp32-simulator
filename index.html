@@ -1,0 +1,1089 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ESP32-Simulator (MicroPython)</title>
+<script src="https://cdn.jsdelivr.net/npm/skulpt@1.2.0/dist/skulpt.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/skulpt@1.2.0/dist/skulpt-stdlib.js"></script>
+<style>
+  :root {
+    --bg: #f4f5f7; --panel: #ffffff; --line: #d9dce1; --text: #1f2430;
+    --muted: #6b7280; --accent: #2563eb; --go: #16a34a; --stop: #dc2626;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    margin: 0; display: flex; flex-direction: column;
+    font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+    background: var(--bg); color: var(--text);
+  }
+  header {
+    display: flex; align-items: center; gap: 10px; padding: 8px 16px;
+    background: var(--panel); border-bottom: 1px solid var(--line);
+  }
+  header h1 { font-size: 16px; font-weight: 600; margin: 0; flex: 1; }
+  #state { font-size: 13px; color: var(--muted); }
+  button {
+    font: inherit; font-size: 14px; padding: 6px 12px; border-radius: 6px;
+    border: 1px solid var(--line); background: var(--panel); color: var(--text); cursor: pointer;
+  }
+  button:hover:not(:disabled) { border-color: #b6bbc4; }
+  button:disabled { opacity: .45; cursor: default; }
+  select {
+    font: inherit; font-size: 14px; padding: 6px 8px; border-radius: 6px;
+    border: 1px solid var(--line); background: var(--panel); color: var(--text); cursor: pointer;
+  }
+  #run { background: var(--go); border-color: var(--go); color: #fff; font-weight: 600; }
+  #stop { background: var(--stop); border-color: var(--stop); color: #fff; font-weight: 600; }
+
+  main {
+    flex: 1; min-height: 0; display: grid; gap: 12px; padding: 12px;
+    grid-template-columns: minmax(320px, 1fr) minmax(380px, 1.15fr);
+  }
+  .col { display: flex; flex-direction: column; gap: 12px; min-height: 0; }
+  .panel {
+    background: var(--panel); border: 1px solid var(--line); border-radius: 8px;
+    overflow: hidden; display: flex; flex-direction: column; min-height: 0;
+  }
+  .panel.grow { flex: 1; }
+  .panel h2 {
+    margin: 0; padding: 6px 12px; font-size: 12px; font-weight: 600; letter-spacing: .05em;
+    text-transform: uppercase; color: var(--muted); border-bottom: 1px solid var(--line);
+  }
+
+  .editor { flex: 1; min-height: 0; display: flex; font: 14px/20px ui-monospace, Menlo, Consolas, monospace; }
+  #gutter {
+    padding: 10px 8px 10px 10px; min-width: 42px; text-align: right; color: #9aa1ad;
+    background: #fafafa; border-right: 1px solid var(--line); overflow: hidden; user-select: none;
+  }
+  #gutter .err { background: var(--stop); color: #fff; border-radius: 3px; }
+  #code {
+    flex: 1; border: 0; outline: 0; resize: none; padding: 10px; font: inherit; tab-size: 4;
+    white-space: pre; overflow: auto; color: var(--text); background: transparent;
+  }
+  #console {
+    margin: 0; height: 150px; overflow: auto; padding: 8px 12px; white-space: pre-wrap;
+    font: 13px/18px ui-monospace, Menlo, Consolas, monospace; background: #1e2330; color: #e5e7eb;
+  }
+  #console .err { color: #fca5a5; }
+  #console .info { color: #94a3b8; }
+
+  .toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 8px 12px; border-bottom: 1px solid var(--line); }
+  .tool.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .spacer { flex: 1; }
+  #swatches { display: flex; gap: 5px; margin-left: 6px; }
+  .swatch { width: 22px; height: 22px; padding: 0; border-radius: 50%; border: 2px solid #fff; box-shadow: 0 0 0 1px var(--line); }
+  .swatch.active { box-shadow: 0 0 0 2px var(--accent); }
+
+  .stage { flex: 1; min-height: 0; display: flex; padding: 8px; }
+  #board { flex: 1; min-width: 0; min-height: 0; touch-action: manipulation; user-select: none; }
+  #board text { font-family: system-ui, -apple-system, "Segoe UI", sans-serif; pointer-events: none; }
+  .hit { fill: transparent; cursor: crosshair; }
+  .part { pointer-events: none; }
+  #board.erase .hit { pointer-events: none; }
+  #board.erase .part { pointer-events: auto; cursor: pointer; }
+  #board.erase .part:hover { opacity: .5; }
+  .press { fill: transparent; cursor: pointer; touch-action: none; }
+  #board.erase .press { pointer-events: none; }
+  .waves { animation: waves .5s ease-in-out infinite alternate; }
+  @keyframes waves { from { opacity: .35; } to { opacity: 1; } }
+  .status { border-top: 1px solid var(--line); padding: 6px 12px; font-size: 13px; min-height: 52px; }
+  #hint { color: var(--muted); }
+  #warn { color: var(--stop); font-weight: 600; }
+
+  @media (max-width: 860px) {
+    html, body { height: auto; }
+    main { grid-template-columns: 1fr; }
+    .editor { height: 300px; flex: none; }
+    #board { height: 78vw; flex: none; width: 100%; }
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>ESP32-Simulator · MicroPython</h1>
+  <span id="state">bereit</span>
+  <select id="examples" aria-label="Beispiel laden"></select>
+  <button id="sound">Ton: an</button>
+  <button id="run">▶ Start</button>
+  <button id="stop">■ Stopp</button>
+</header>
+
+<main>
+  <div class="col">
+    <div class="panel grow">
+      <h2>Programm</h2>
+      <div class="editor">
+        <div id="gutter"></div>
+        <textarea id="code" spellcheck="false" autocapitalize="off" autocomplete="off"></textarea>
+      </div>
+    </div>
+    <div class="panel">
+      <h2>Ausgabe</h2>
+      <pre id="console"></pre>
+    </div>
+  </div>
+
+  <div class="col">
+    <div class="panel grow">
+      <h2>Schaltung</h2>
+      <div class="toolbar">
+        <button class="tool" data-tool="wire">Kabel</button>
+        <button class="tool" data-tool="led">LED</button>
+        <button class="tool" data-tool="res">Widerstand</button>
+        <button class="tool" data-tool="btn">Taster</button>
+        <button class="tool" data-tool="buz">Summer</button>
+        <button class="tool" data-tool="erase">Entfernen</button>
+        <span id="swatches"></span>
+        <span class="spacer"></span>
+        <button id="clear">Alles entfernen</button>
+      </div>
+      <div class="stage">
+        <svg id="board" viewBox="0 0 560 570" preserveAspectRatio="xMidYMid meet"></svg>
+      </div>
+      <div class="status">
+        <div id="hint"></div>
+        <div id="warn"></div>
+      </div>
+    </div>
+  </div>
+</main>
+
+<script>
+"use strict";
+
+/* ---------- Grundlagen ---------- */
+const NS = 'http://www.w3.org/2000/svg';
+const P = 24;                                  // Rastermaß in px
+const STORE_KEY = 'esp32sim.v1';
+const svg = document.getElementById('board');
+const $ = id => document.getElementById(id);
+
+function el(tag, attrs, parent, text) {
+  const e = document.createElementNS(NS, tag);
+  for (const k in attrs) e.setAttribute(k, attrs[k]);
+  if (text !== undefined) e.textContent = text;
+  if (parent) parent.appendChild(e);
+  return e;
+}
+
+const DEFAULT_CODE =
+`from machine import Pin
+import time
+
+# Die blaue LED auf dem Board hängt an GPIO 2
+led = Pin(2, Pin.OUT)
+
+while True:
+    led.value(1)
+    time.sleep(0.5)
+    led.value(0)
+    time.sleep(0.5)
+`;
+
+const WIRE_COLORS = ['#222831', '#dc2626', '#2563eb', '#16a34a', '#eab308', '#f97316'];
+const LED_COLORS = {
+  rot:  { off: '#7a2a2a', on: '#ff3b30' },
+  gruen:{ off: '#2a5f3a', on: '#30d158' },
+  gelb: { off: '#7a6a1f', on: '#ffd60a' },
+  blau: { off: '#27407a', on: '#3b9dff' }
+};
+const MAX_LEN = { led: 4.3 * P, res: 7.3 * P, buz: 5.3 * P };
+const MIN_LEN = { buz: 2.9 * P };
+
+/* ---------- Anschlusspunkte: ESP32-Pins und Steckbrett-Löcher ---------- */
+const TOP = ['VIN', 'GND', '13', '12', '14', '27', '26', '25', '33', '32', '35', '34', '39', '36', 'EN'];
+const BOT = ['3V3', 'GND', '15', '2', '4', '16', '17', '5', '18', '19', '21', 'RX0', 'TX0', '22', '23'];
+const INPUT_ONLY = new Set([34, 35, 36, 39]);
+const ROWS = 'abcdefghij';
+
+const pins = [];
+const points = new Map();   // id -> {x, y, node, type, ...}
+
+function addPin(label, row, i) {
+  let kind = 'gpio', gpio = null;
+  if (label === 'GND') kind = 'gnd';
+  else if (label === '3V3') kind = '3v3';
+  else if (label === 'VIN') kind = 'vin';
+  else if (label === 'EN') kind = 'en';
+  else gpio = label === 'RX0' ? 3 : label === 'TX0' ? 1 : +label;
+  const pin = { id: 'pin:' + row + ':' + i, label, kind, gpio, row, x: 112 + i * P, y: row === 'top' ? 44 : 156 };
+  pins.push(pin);
+  points.set(pin.id, { x: pin.x, y: pin.y, node: pin.id, type: 'pin', pin });
+}
+TOP.forEach((l, i) => addPin(l, 'top', i));
+BOT.forEach((l, i) => addPin(l, 'bot', i));
+
+const holeY = r => r < 5 ? 280 + r * P : 424 + (r - 5) * P;
+for (let c = 0; c < 17; c++) for (let r = 0; r < 10; r++) {
+  points.set('h:' + c + ':' + r, {
+    x: 88 + c * P, y: holeY(r), type: 'hole', c, r,
+    node: 's:' + c + ':' + (r < 5 ? 't' : 'b'), label: (c + 1) + ROWS[r]
+  });
+}
+
+/* ---------- Zustand ---------- */
+const gpioState = {};
+function resetPins() {
+  for (const p of pins) if (p.gpio !== null) gpioState[p.gpio] = { mode: null, value: 0, pull: null, pwm: null };
+  markDirty();
+}
+
+let parts = [];             // {id, type: 'wire'|'led'|'res'|'buz', a, b, color} oder {id, type: 'btn', a, c}
+const pressed = new Set();  // ids der gerade gedrückten Taster
+let nextId = 1;
+let tool = 'wire';
+let pending = null;         // erster angeklickter Punkt
+let wireColor = WIRE_COLORS[0];
+let ledColor = 'rot';
+
+function save() {
+  try { localStorage.setItem(STORE_KEY, JSON.stringify({ code: codeEl.value, parts })); } catch (e) {}
+}
+function load() {
+  try {
+    const d = JSON.parse(localStorage.getItem(STORE_KEY));
+    if (d && typeof d.code === 'string') {
+      parts = (d.parts || []).filter(p => points.has(p.a) && (p.type === 'btn' || points.has(p.b)));
+      nextId = parts.reduce((m, p) => Math.max(m, p.id), 0) + 1;
+      return d.code;
+    }
+  } catch (e) {}
+  return DEFAULT_CODE;
+}
+
+/* ---------- Zeichnen: Board und Steckbrett (statisch) ---------- */
+const defs = el('defs', {}, svg);
+for (const name in LED_COLORS) {
+  const g = el('radialGradient', { id: 'glow-' + name }, defs);
+  el('stop', { offset: '0', 'stop-color': LED_COLORS[name].on, 'stop-opacity': '.85' }, g);
+  el('stop', { offset: '1', 'stop-color': LED_COLORS[name].on, 'stop-opacity': '0' }, g);
+}
+const gStatic = el('g', {}, svg);
+const gHighlight = el('g', {}, svg);
+const gParts = el('g', {}, svg);
+const gPreview = el('g', {}, svg);
+const gHits = el('g', {}, svg);
+const gPress = el('g', {}, svg);
+let onboardLed;
+
+function drawStatic() {
+  // ESP32-Board
+  el('rect', { x: 60, y: 30, width: 440, height: 140, rx: 6, fill: '#1f2937' }, gStatic);
+  el('rect', { x: 48, y: 87, width: 30, height: 26, rx: 2, fill: '#b8bcc4' }, gStatic);            // USB
+  el('rect', { x: 330, y: 78, width: 128, height: 46, rx: 2, fill: '#c9ced6' }, gStatic);          // Funkmodul
+  el('rect', { x: 458, y: 78, width: 34, height: 46, fill: '#0b0f17' }, gStatic);                  // Antenne
+  el('text', { x: 394, y: 105, 'font-size': 10, 'text-anchor': 'middle', fill: '#4b5563' }, gStatic, 'ESP32-WROOM-32');
+  el('text', { x: 240, y: 105, 'font-size': 12, 'text-anchor': 'middle', fill: '#9ca3af' }, gStatic, 'ESP32 DevKit');
+  el('rect', { x: 110, y: 96, width: 9, height: 6, rx: 1, fill: '#ff3b30' }, gStatic);             // Power-LED
+  el('text', { x: 114.5, y: 114, 'font-size': 7, 'text-anchor': 'middle', fill: '#9ca3af' }, gStatic, 'PWR');
+  el('rect', { x: 140, y: 96, width: 9, height: 6, rx: 1, fill: '#1e3a5f' }, gStatic);
+  onboardLed = el('g', { opacity: 0 }, gStatic);
+  el('circle', { cx: 144.5, cy: 99, r: 14, fill: 'url(#glow-blau)' }, onboardLed);
+  el('rect', { x: 140, y: 96, width: 9, height: 6, rx: 1, fill: '#7cc4ff' }, onboardLed);
+  el('text', { x: 144.5, y: 114, 'font-size': 7, 'text-anchor': 'middle', fill: '#9ca3af' }, gStatic, 'GPIO 2');
+  for (const p of pins) {
+    el('rect', { x: p.x - 5, y: p.y - 5, width: 10, height: 10, rx: 2, fill: '#d4af37' }, gStatic);
+    el('circle', { cx: p.x, cy: p.y, r: 2.2, fill: '#3a3d44' }, gStatic);
+    const col = p.kind === 'gnd' ? '#93c5fd' : (p.kind === '3v3' || p.kind === 'vin') ? '#fca5a5' : '#f3f4f6';
+    el('text', { x: p.x, y: p.row === 'top' ? 64 : 143, 'font-size': 8.5, 'font-weight': 600, 'text-anchor': 'middle', fill: col }, gStatic, p.label);
+  }
+
+  // Mini-Steckbrett (17 Spalten, je 5 Löcher oben und unten verbunden)
+  el('rect', { x: 62, y: 248, width: 436, height: 304, rx: 10, fill: '#f7f5ef', stroke: '#cfcabd' }, gStatic);
+  el('rect', { x: 62, y: 393, width: 436, height: 14, fill: '#e6e2d6' }, gStatic);
+  for (let c = 0; c < 17; c++) {
+    el('text', { x: 88 + c * P, y: 267, 'font-size': 8, 'text-anchor': 'middle', fill: '#a39d8f' }, gStatic, c + 1);
+    el('text', { x: 88 + c * P, y: 540, 'font-size': 8, 'text-anchor': 'middle', fill: '#a39d8f' }, gStatic, c + 1);
+  }
+  for (let r = 0; r < 10; r++)
+    el('text', { x: 72, y: holeY(r) + 3, 'font-size': 8, 'text-anchor': 'middle', fill: '#a39d8f' }, gStatic, ROWS[r]);
+  for (const [id, pt] of points) {
+    if (pt.type === 'hole') el('rect', { x: pt.x - 3.5, y: pt.y - 3.5, width: 7, height: 7, rx: 1.5, fill: '#3a3d44' }, gStatic);
+    el('circle', { cx: pt.x, cy: pt.y, r: 11, class: 'hit', 'data-pt': id }, gHits);
+  }
+}
+
+/* ---------- Zeichnen: Bauteile ---------- */
+const ledEls = new Map();   // part.id -> {glow, on, warn}
+const btnEls = new Map();   // part.id -> {cap, ring, shine}
+const buzEls = new Map();   // part.id -> {waves}
+
+// Ein Taster belegt vier Löcher: Spalten c und c+2 in den Reihen e und f
+function partPoints(p) {
+  if (p.type !== 'btn') return [p.a, p.b];
+  return ['h:' + p.c + ':4', 'h:' + (p.c + 2) + ':4', 'h:' + p.c + ':5', 'h:' + (p.c + 2) + ':5'];
+}
+
+function renderParts() {
+  gParts.textContent = '';
+  gPress.textContent = '';
+  ledEls.clear(); btnEls.clear(); buzEls.clear();
+  const order = { res: 0, led: 1, buz: 1, btn: 1, wire: 2 };
+  const sorted = parts.slice().sort((p, q) => order[p.type] - order[q.type]);
+  for (const p of sorted) {
+    const a = points.get(p.a), b = points.get(p.b) || a;
+    const g = el('g', { class: 'part', 'data-id': p.id }, gParts);
+    const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
+    const len = Math.hypot(b.x - a.x, b.y - a.y) || 1;
+    if (p.type === 'wire') {
+      const sag = Math.min(26, len * 0.12);
+      const d = `M${a.x},${a.y} Q${mx},${my + sag} ${b.x},${b.y}`;
+      el('path', { d, fill: 'none', stroke: 'transparent', 'stroke-width': 14 }, g);
+      el('path', { d, fill: 'none', stroke: p.color, 'stroke-width': 4, 'stroke-linecap': 'round' }, g);
+      el('circle', { cx: a.x, cy: a.y, r: 4, fill: p.color, stroke: '#00000055' }, g);
+      el('circle', { cx: b.x, cy: b.y, r: 4, fill: p.color, stroke: '#00000055' }, g);
+    } else if (p.type === 'res') {
+      const ang = Math.atan2(b.y - a.y, b.x - a.x) * 180 / Math.PI;
+      const r = el('g', { transform: `translate(${mx},${my}) rotate(${ang})` }, g);
+      el('line', { x1: -len / 2, y1: 0, x2: len / 2, y2: 0, stroke: '#8a8f98', 'stroke-width': 2.5, 'stroke-linecap': 'round' }, r);
+      el('rect', { x: -14, y: -5.5, width: 28, height: 11, rx: 4.5, fill: '#dcc095', stroke: '#b89b6c' }, r);
+      [[-9, '#c81e1e'], [-4, '#c81e1e'], [1, '#7a4a1e'], [8, '#c9a227']].forEach(([x, c]) =>
+        el('rect', { x, y: -5.5, width: 2.6, height: 11, fill: c }, r));
+    } else if (p.type === 'led') {
+      const c = LED_COLORS[p.color] || LED_COLORS.rot;
+      const nx = -(b.y - a.y) / len, ny = (b.x - a.x) / len;
+      el('line', { x1: a.x, y1: a.y, x2: mx, y2: my, stroke: '#8a8f98', 'stroke-width': 2.5, 'stroke-linecap': 'round' }, g);
+      el('line', { x1: b.x, y1: b.y, x2: mx, y2: my, stroke: '#8a8f98', 'stroke-width': 2.5, 'stroke-linecap': 'round' }, g);
+      const glow = el('circle', { cx: mx, cy: my, r: 26, fill: `url(#glow-${p.color})`, opacity: 0 }, g);
+      el('circle', { cx: mx, cy: my, r: 10, fill: c.off, stroke: '#00000040' }, g);
+      const on = el('circle', { cx: mx, cy: my, r: 10, fill: c.on, opacity: 0 }, g);
+      el('circle', { cx: mx - 3, cy: my - 3, r: 2.5, fill: '#ffffff', opacity: .45 }, g);
+      el('text', { x: a.x + nx * 9, y: a.y + ny * 9 + 4, 'font-size': 12, 'font-weight': 700, 'text-anchor': 'middle', fill: '#dc2626' }, g, '+');
+      const warn = el('text', { x: mx, y: my - 14, 'font-size': 15, 'text-anchor': 'middle', fill: '#dc2626', display: 'none' }, g, '⚠');
+      ledEls.set(p.id, { glow, on, warn });
+    } else if (p.type === 'buz') {
+      const ang = Math.atan2(b.y - a.y, b.x - a.x) * 180 / Math.PI;
+      const nx = -(b.y - a.y) / len, ny = (b.x - a.x) / len;
+      const r = el('g', { transform: `translate(${mx},${my}) rotate(${ang})` }, g);
+      el('line', { x1: -len / 2, y1: 0, x2: len / 2, y2: 0, stroke: '#8a8f98', 'stroke-width': 3, 'stroke-linecap': 'round' }, r);
+      el('circle', { cx: 0, cy: 0, r: 20, fill: '#1d2027', stroke: '#0b0c10', 'stroke-width': 1.5 }, r);
+      el('circle', { cx: 0, cy: 0, r: 14, fill: 'none', stroke: '#3a3f4b', 'stroke-width': 1.5 }, r);
+      el('circle', { cx: 0, cy: 0, r: 3.5, fill: '#0b0c10', stroke: '#4a505d' }, r);
+      const flip = b.x < a.x || (b.x === a.x && b.y > a.y) ? -1 : 1;
+      const waves = el('g', { class: 'waves', transform: `scale(1,${flip})`, display: 'none', fill: 'none', stroke: '#378ADD', 'stroke-width': 2.5, 'stroke-linecap': 'round' }, r);
+      el('path', { d: 'M-8,26 Q0,31 8,26' }, waves);
+      el('path', { d: 'M-14,33 Q0,42 14,33' }, waves);
+      el('text', { x: a.x + nx * 9, y: a.y + ny * 9 + 4, 'font-size': 12, 'font-weight': 700, 'text-anchor': 'middle', fill: '#dc2626' }, g, '+');
+      buzEls.set(p.id, { waves });
+    } else if (p.type === 'btn') {
+      const x1 = a.x, x2 = a.x + 2 * P, cx = a.x + P, cy = (holeY(4) + holeY(5)) / 2;
+      for (const id of partPoints(p)) {
+        const q = points.get(id);
+        el('rect', { x: q.x - 4, y: q.y - 5, width: 8, height: 10, rx: 1, fill: '#b8bcc4', stroke: '#8a8f98' }, g);
+      }
+      el('rect', { x: x1 - 3, y: cy - 19, width: x2 - x1 + 6, height: 38, rx: 4, fill: '#2b2f38', stroke: '#111318' }, g);
+      const ring = el('circle', { cx, cy, r: 15, fill: 'none', stroke: '#378ADD', 'stroke-width': 3, display: 'none' }, g);
+      const cap = el('circle', { cx, cy, r: 13, fill: '#9aa0ab', stroke: '#5b616e', 'stroke-width': 1.5 }, g);
+      const shine = el('circle', { cx: cx - 4, cy: cy - 4, r: 3.5, fill: '#ffffff', opacity: .4 }, g);
+      el('circle', { cx, cy, r: 14, class: 'press', 'data-id': p.id }, gPress);
+      btnEls.set(p.id, { cap, ring, shine });
+    }
+  }
+  refresh();
+}
+
+/* ---------- Schaltungslogik ---------- */
+function pinLevel(pin) {
+  if (pin.kind === 'gnd') return 0;
+  if (pin.kind === '3v3' || pin.kind === 'vin') return 1;
+  if (pin.kind !== 'gpio') return null;
+  const st = gpioState[pin.gpio];
+  if (st.mode !== 'out') return null;
+  return st.pwm ? st.pwm.duty / 1023 : st.value;
+}
+
+// Fasst alles, was leitend verbunden ist, zu Netzen zusammen und bestimmt,
+// welche LEDs zwischen einem "hohen" und einem "niedrigen" Netz liegen.
+function evaluate() {
+  const parent = new Map();
+  const find = x => { while (parent.has(x)) x = parent.get(x); return x; };
+  const nodeOf = id => points.get(id).node;
+  const union = (a, b) => { a = find(a); b = find(b); if (a !== b) parent.set(a, b); };
+  for (const p of parts) {
+    if (p.type === 'wire') union(nodeOf(p.a), nodeOf(p.b));
+    else if (p.type === 'btn') {
+      // Beinchen einer Spalte sind im Taster fest verbunden; Drücken verbindet beide Spalten
+      const l = 's:' + p.c + ':', r = 's:' + (p.c + 2) + ':';
+      union(l + 't', l + 'b'); union(r + 't', r + 'b');
+      if (pressed.has(p.id)) union(l + 't', r + 't');
+    }
+  }
+
+  const level = new Map(), shorts = [];
+  for (const pin of pins) {
+    const lv = pinLevel(pin);
+    if (lv === null) continue;
+    const n = find(pin.id);
+    if (!level.has(n)) level.set(n, { lv, pin });
+    else if (Math.abs(level.get(n).lv - lv) > 0.001) shorts.push([level.get(n).pin, pin]);
+  }
+
+  const adj = new Map();
+  const add = (from, to, w, dir) => { if (!adj.has(from)) adj.set(from, []); adj.get(from).push({ to, w, dir }); };
+  for (const p of parts) {
+    if (p.type !== 'res' && p.type !== 'led') continue;
+    const a = find(nodeOf(p.a)), b = find(nodeOf(p.b));
+    if (p.type === 'res') { add(a, b, 1, 0); add(b, a, 1, 0); }
+    else { add(a, b, 0, 1); add(b, a, 0, -1); }
+  }
+  // dir = +1: in Stromrichtung durch LEDs (zum Minuspol), -1: gegen die Stromrichtung (zum Pluspol),
+  // 0: nur über Widerstände. Liefert die erreichten Netze mit festem Pegel samt Anzahl Widerstände.
+  function reach(start, dir) {
+    const dist = new Map([[start, 0]]), queue = [start];
+    while (queue.length) {
+      const n = queue.shift(), d = dist.get(n);
+      if (level.has(n)) continue;
+      for (const e of adj.get(n) || []) {
+        if (e.dir !== 0 && e.dir !== dir) continue;
+        if (!dist.has(e.to) || dist.get(e.to) > d + e.w) { dist.set(e.to, d + e.w); queue.push(e.to); }
+      }
+    }
+    const found = [];
+    for (const [n, d] of dist) if (level.has(n)) found.push({ lv: level.get(n).lv, r: d, pin: level.get(n).pin });
+    return found.sort((p, q) => p.r - q.r);
+  }
+
+  const leds = new Map();
+  for (const p of parts) {
+    if (p.type !== 'led') continue;
+    const a = find(nodeOf(p.a)), c = find(nodeOf(p.b));
+    let b = 0, warn = false;
+    if (a !== c) {
+      const up = reach(a, -1), down = reach(c, 1);
+      if (up.length && down.length) {
+        const hi = Math.max(...up.map(u => u.lv)), lo = Math.min(...down.map(u => u.lv));
+        b = Math.max(0, hi - lo);
+        if (b > 0) {
+          const ru = Math.min(...up.filter(u => u.lv === hi).map(u => u.r));
+          const rd = Math.min(...down.filter(u => u.lv === lo).map(u => u.r));
+          warn = ru + rd === 0;
+        }
+      }
+    }
+    leds.set(p.id, { b, warn });
+  }
+
+  // Passiver Summer: tönt nur, wenn an einer Seite ein PWM-Signal anliegt
+  const buzzers = new Map();
+  const pwmOf = s => {
+    const st = s.pin.kind === 'gpio' ? gpioState[s.pin.gpio] : null;
+    return st && st.pwm && st.pwm.duty > 0 && st.pwm.duty < 1023 ? st.pwm : null;
+  };
+  for (const p of parts) {
+    if (p.type !== 'buz') continue;
+    const a = find(nodeOf(p.a)), c = find(nodeOf(p.b));
+    let freq = 0, dc = false;
+    const A = reach(a, 0)[0], B = reach(c, 0)[0];
+    if (a !== c && A && B) {
+      const pa = pwmOf(A), pb = pwmOf(B);
+      if (pa && !pb) freq = pa.freq;
+      else if (pb && !pa) freq = pb.freq;
+      else if (!pa && !pb && Math.abs(A.lv - B.lv) > 0.5) dc = true;
+    }
+    buzzers.set(p.id, { freq, dc });
+  }
+  return { find, level, reach, leds, buzzers, shorts };
+}
+
+let dirty = false, scheduled = false, evalState = null;
+function markDirty() {
+  dirty = true;
+  if (scheduled) return;
+  scheduled = true;
+  const go = () => { if (scheduled) { scheduled = false; refresh(); } };
+  requestAnimationFrame(go);
+  setTimeout(go, 60);         // Reserve, falls der Browser gerade keine Bilder zeichnet
+}
+
+/* ---------- Ton ---------- */
+let audioCtx = null, soundOn = true;
+const voices = new Map();   // part.id -> {osc, gain}
+const audible = b => b.freq >= 20 && b.freq <= 20000;
+function updateAudio(buzzers) {
+  for (const [id, v] of voices) if (!buzzers.has(id)) { v.osc.stop(); voices.delete(id); }
+  if (!audioCtx) return;
+  const now = audioCtx.currentTime;
+  for (const [id, b] of buzzers) {
+    const on = soundOn && audible(b);
+    let v = voices.get(id);
+    if (!v) {
+      if (!on) continue;
+      v = { osc: audioCtx.createOscillator(), gain: audioCtx.createGain() };
+      v.osc.type = 'square';
+      v.gain.gain.value = 0;
+      v.osc.connect(v.gain).connect(audioCtx.destination);
+      v.osc.start();
+      voices.set(id, v);
+    }
+    if (on) v.osc.frequency.setValueAtTime(b.freq, now);
+    v.gain.gain.setTargetAtTime(on ? 0.04 : 0, now, 0.004);
+  }
+}
+function refresh() {
+  evalState = evaluate();
+  dirty = false;
+  const warnings = [];
+  for (const [id, r] of evalState.leds) {
+    const e = ledEls.get(id);
+    if (!e) continue;
+    e.glow.setAttribute('opacity', r.b);
+    e.on.setAttribute('opacity', r.b > 0 ? Math.max(0.3, Math.sqrt(r.b)) : 0);
+    e.warn.setAttribute('display', r.warn ? 'inline' : 'none');
+    if (r.warn && !warnings.length) warnings.push('⚠ LED ohne Vorwiderstand – in echt würde sie (oder der Pin) Schaden nehmen.');
+  }
+  for (const [id, e] of btnEls) {
+    const on = pressed.has(id);
+    e.cap.setAttribute('r', on ? 10.5 : 13);
+    e.cap.setAttribute('fill', on ? '#6b717d' : '#9aa0ab');
+    e.ring.setAttribute('display', on ? 'inline' : 'none');
+    e.shine.setAttribute('display', on ? 'none' : 'inline');
+  }
+  let dcNote = false;
+  for (const [id, b] of evalState.buzzers) {
+    const e = buzEls.get(id);
+    if (e) e.waves.setAttribute('display', audible(b) ? 'inline' : 'none');
+    if (b.dc) dcNote = true;
+  }
+  if (dcNote) warnings.push('Hinweis: Der passive Summer bleibt bei Dauerspannung stumm – er braucht ein PWM-Signal.');
+  updateAudio(evalState.buzzers);
+  for (const [p, q] of evalState.shorts)
+    warnings.push('⚠ Kurzschluss zwischen ' + pinName(p) + ' und ' + pinName(q) + '!');
+  const st2 = gpioState[2];
+  onboardLed.setAttribute('opacity', st2 && st2.mode === 'out' ? (st2.pwm ? st2.pwm.duty / 1023 : st2.value) : 0);
+  $('warn').textContent = warnings.join('  ');
+}
+function pinName(pin) { return pin.kind === 'gpio' ? 'GPIO ' + pin.gpio : pin.label; }
+
+// Wert, den ein Eingangs-Pin liest
+function readInput(gpio) {
+  if (dirty || !evalState) evalState = evaluate();
+  const pin = pins.find(p => p.gpio === gpio);
+  const found = evalState.reach(evalState.find(pin.id), 0);
+  if (found.length) return found[0].lv >= 0.5 ? 1 : 0;    // nächstgelegener fester Pegel
+  const st = gpioState[gpio];
+  if (st.pull === 'up') return 1;
+  if (st.pull === 'down') return 0;
+  return Math.random() < 0.5 ? 0 : 1;      // offener Eingang: Zufallswert
+}
+
+/* ---------- Bedienung der Schaltung ---------- */
+const TOOL_HINT = {
+  wire: 'Kabel: zwei Punkte nacheinander anklicken (ESP32-Pin oder Loch im Steckbrett).',
+  led: 'LED: erst das Loch für das lange Beinchen (+) anklicken, dann das für das kurze (–).',
+  res: 'Widerstand (220 Ω): zwei Löcher im Steckbrett nacheinander anklicken.',
+  btn: 'Taster: ein Loch anklicken – er sitzt dann über der Mittelrille, linke Beinchen in dieser Spalte.',
+  buz: 'Summer: erst das Loch für das Plus-Beinchen anklicken, dann eines 3 bis 5 Löcher daneben.',
+  erase: 'Entfernen: Kabel oder Bauteil anklicken.'
+};
+let baseHint = '';
+function say(msg) { baseHint = msg; $('hint').textContent = msg; }
+
+function setTool(t) {
+  tool = t;
+  cancelPending();
+  document.querySelectorAll('.tool').forEach(b => b.classList.toggle('active', b.dataset.tool === t));
+  svg.classList.toggle('erase', t === 'erase');
+  const sw = $('swatches');
+  sw.textContent = '';
+  const list = t === 'wire' ? WIRE_COLORS.map(c => [c, c]) : t === 'led' ? Object.keys(LED_COLORS).map(k => [k, LED_COLORS[k].on]) : [];
+  for (const [key, css] of list) {
+    const b = document.createElement('button');
+    b.className = 'swatch' + (key === (t === 'wire' ? wireColor : ledColor) ? ' active' : '');
+    b.style.background = css;
+    b.title = t === 'wire' ? 'Kabelfarbe' : 'LED-Farbe: ' + key;
+    b.onclick = () => { if (t === 'wire') wireColor = key; else ledColor = key; setTool(t); };
+    sw.appendChild(b);
+  }
+  say(TOOL_HINT[t]);
+}
+function cancelPending() { pending = null; gPreview.textContent = ''; }
+const occupied = id => parts.some(p => partPoints(p).includes(id));
+
+function handlePoint(id) {
+  if (tool === 'erase') return;
+  const pt = points.get(id);
+  if (tool === 'btn') {
+    if (pt.type !== 'hole') { say('Der Taster gehört ins Steckbrett.'); return; }
+    const p = { id: nextId++, type: 'btn', c: Math.min(pt.c, 14) };
+    p.a = 'h:' + p.c + ':4';
+    if (partPoints(p).some(occupied) || parts.some(q => q.type === 'btn' && Math.abs(q.c - p.c) < 3)) { say('Dort ist kein Platz – der Taster braucht vier freie Löcher in den Reihen e und f.'); return; }
+    parts.push(p);
+    save();
+    renderParts();
+    return;
+  }
+  if (id === pending) { cancelPending(); say(TOOL_HINT[tool]); return; }
+  if (occupied(id)) { say('Hier steckt schon etwas – wähle einen freien Punkt.'); return; }
+  if (tool !== 'wire' && pt.type !== 'hole') { say('Dieses Bauteil gehört ins Steckbrett.'); return; }
+  if (!pending) {
+    pending = id;
+    el('circle', { cx: pt.x, cy: pt.y, r: 6, fill: 'none', stroke: '#2563eb', 'stroke-width': 2 }, gPreview);
+    el('line', { x1: pt.x, y1: pt.y, x2: pt.x, y2: pt.y, stroke: '#2563eb', 'stroke-width': 2, 'stroke-dasharray': '5 4', 'pointer-events': 'none' }, gPreview);
+    say(tool === 'led' ? 'Jetzt das Loch für das kurze Beinchen (–) anklicken.'
+      : tool === 'buz' ? 'Jetzt das Loch für das zweite Beinchen anklicken (3 bis 5 Löcher Abstand).'
+      : 'Jetzt den zweiten Punkt anklicken.');
+    return;
+  }
+  const a = points.get(pending), dist = Math.hypot(pt.x - a.x, pt.y - a.y);
+  if (MAX_LEN[tool] && dist > MAX_LEN[tool]) {
+    say('So weit reichen die Beinchen nicht – wähle ein näheres Loch.');
+    return;
+  }
+  if (MIN_LEN[tool] && dist < MIN_LEN[tool]) {
+    say('Zu eng – die Beinchen des Summers brauchen mindestens 3 Löcher Abstand.');
+    return;
+  }
+  parts.push({ id: nextId++, type: tool, a: pending, b: id, color: tool === 'wire' ? wireColor : tool === 'led' ? ledColor : null });
+  cancelPending();
+  say(TOOL_HINT[tool]);
+  save();
+  renderParts();
+}
+
+function svgPoint(evt) {
+  const pt = svg.createSVGPoint();
+  pt.x = evt.clientX; pt.y = evt.clientY;
+  return pt.matrixTransform(svg.getScreenCTM().inverse());
+}
+function describe(pt) {
+  if (pt.type === 'hole')
+    return 'Loch ' + pt.label + ' – leitend verbunden mit ' + (pt.c + 1) + (pt.r < 5 ? 'a–e' : 'f–j') + '.';
+  const p = pt.pin;
+  if (p.kind === 'gnd') return 'GND – Minuspol (0 V).';
+  if (p.kind === '3v3') return '3V3 – liefert dauerhaft 3,3 V.';
+  if (p.kind === 'vin') return 'VIN – 5 V vom USB-Anschluss.';
+  if (p.kind === 'en') return 'EN – Reset-Pin (im Simulator ohne Funktion).';
+  return 'GPIO ' + p.gpio + ' – im Programm: Pin(' + p.gpio + ')' + (INPUT_ONLY.has(p.gpio) ? ' · nur als Eingang nutzbar.' : '');
+}
+
+function releaseButtons() {
+  if (pressed.size) { pressed.clear(); markDirty(); }
+}
+window.addEventListener('pointerup', releaseButtons);
+window.addEventListener('pointercancel', releaseButtons);
+window.addEventListener('blur', releaseButtons);
+
+svg.addEventListener('pointerdown', evt => {
+  const t = evt.target;
+  if (t.classList.contains('press')) {
+    evt.preventDefault();
+    pressed.add(+t.dataset.id);
+    markDirty();
+    return;
+  }
+  if (t.classList.contains('hit')) { handlePoint(t.dataset.pt); return; }
+  const part = t.closest && t.closest('.part');
+  if (tool === 'erase' && part) {
+    parts = parts.filter(p => p.id !== +part.dataset.id);
+    save();
+    renderParts();
+  }
+});
+svg.addEventListener('pointermove', evt => {
+  const line = gPreview.querySelector('line');
+  if (!line) return;
+  const p = svgPoint(evt);
+  line.setAttribute('x2', p.x); line.setAttribute('y2', p.y);
+});
+svg.addEventListener('pointerover', evt => {
+  const t = evt.target;
+  if (t.classList.contains('press')) { $('hint').textContent = 'Taster: zum Drücken die Maustaste gedrückt halten.'; return; }
+  if (!t.classList.contains('hit')) return;
+  const pt = points.get(t.dataset.pt);
+  gHighlight.textContent = '';
+  if (pt.type === 'hole')
+    el('rect', { x: pt.x - 10, y: holeY(pt.r < 5 ? 0 : 5) - 10, width: 20, height: 4 * P + 20, rx: 10, fill: '#2563eb', opacity: .16 }, gHighlight);
+  else
+    el('circle', { cx: pt.x, cy: pt.y, r: 10, fill: '#60a5fa', opacity: .45 }, gHighlight);
+  $('hint').textContent = describe(pt);
+});
+svg.addEventListener('pointerout', evt => {
+  if (evt.target.classList.contains('press')) { $('hint').textContent = baseHint; return; }
+  if (!evt.target.classList.contains('hit')) return;
+  gHighlight.textContent = '';
+  $('hint').textContent = baseHint;
+});
+document.addEventListener('keydown', evt => {
+  if (evt.key === 'Escape' && pending) { cancelPending(); say(TOOL_HINT[tool]); }
+});
+document.querySelectorAll('.tool').forEach(b => b.onclick = () => setTool(b.dataset.tool));
+$('clear').onclick = () => {
+  if (!parts.length || !confirm('Wirklich alle Kabel und Bauteile entfernen?')) return;
+  parts = [];
+  save();
+  renderParts();
+};
+
+/* ---------- Editor ---------- */
+const codeEl = $('code'), gutter = $('gutter'), consoleEl = $('console');
+let errLine = null, lineCount = 0;
+
+function updateGutter() {
+  const n = codeEl.value.split('\n').length;
+  if (n !== lineCount) {
+    lineCount = n;
+    gutter.textContent = '';
+    for (let i = 1; i <= n; i++) { const d = document.createElement('div'); d.textContent = i; gutter.appendChild(d); }
+  }
+  Array.from(gutter.children).forEach((d, i) => d.classList.toggle('err', i + 1 === errLine));
+  gutter.scrollTop = codeEl.scrollTop;
+}
+function insert(text, start, end) {
+  codeEl.setRangeText(text, start, end, 'end');
+  codeEl.dispatchEvent(new Event('input'));
+}
+codeEl.addEventListener('input', () => { errLine = null; updateGutter(); save(); });
+codeEl.addEventListener('scroll', () => { gutter.scrollTop = codeEl.scrollTop; });
+codeEl.addEventListener('keydown', evt => {
+  const s = codeEl.selectionStart, e = codeEl.selectionEnd, v = codeEl.value;
+  const lineStart = v.lastIndexOf('\n', s - 1) + 1, before = v.slice(lineStart, s);
+  if (evt.key === 'Tab') {
+    evt.preventDefault();
+    insert(' '.repeat(4 - (before.length % 4)), s, e);
+  } else if (evt.key === 'Enter') {
+    evt.preventDefault();
+    let indent = before.match(/^ */)[0];
+    if (/:\s*(#.*)?$/.test(before)) indent += '    ';
+    insert('\n' + indent, s, e);
+  } else if (evt.key === 'Backspace' && s === e && before.length && /^ +$/.test(before) && before.length % 4 === 0) {
+    evt.preventDefault();
+    insert('', s - 4, s);
+  }
+});
+
+function log(text, cls) {
+  if (cls && consoleEl.textContent && !consoleEl.textContent.endsWith('\n')) text = '\n' + text;
+  const span = document.createElement('span');
+  if (cls) span.className = cls;
+  span.textContent = text;
+  consoleEl.appendChild(span);
+  while (consoleEl.childNodes.length > 600) consoleEl.removeChild(consoleEl.firstChild);
+  consoleEl.scrollTop = consoleEl.scrollHeight;
+}
+
+/* ---------- MicroPython-Module (laufen im Python-Interpreter Skulpt) ---------- */
+const PY_MACHINE = `
+class Pin:
+    IN = 1
+    OUT = 3
+    PULL_UP = 2
+    PULL_DOWN = 1
+
+    def __init__(self, id, mode=-1, pull=-1, value=None):
+        self._id = _sim_pin_init(id, mode, pull, value)
+
+    def init(self, mode=-1, pull=-1, value=None):
+        _sim_pin_init(self._id, mode, pull, value)
+
+    def value(self, v=None):
+        if v is None:
+            return _sim_pin_get(self._id)
+        _sim_pin_set(self._id, 1 if v else 0)
+
+    def __call__(self, v=None):
+        return self.value(v)
+
+    def on(self):
+        _sim_pin_set(self._id, 1)
+
+    def off(self):
+        _sim_pin_set(self._id, 0)
+
+
+class PWM:
+    def __init__(self, pin, freq=5000, duty=512, duty_u16=None):
+        self._id = pin._id
+        self._freq = freq
+        self._duty = duty if duty_u16 is None else duty_u16 // 64
+        _sim_pwm(self._id, self._freq, self._duty)
+
+    def freq(self, f=None):
+        if f is None:
+            return self._freq
+        self._freq = f
+        _sim_pwm(self._id, self._freq, self._duty)
+
+    def duty(self, d=None):
+        if d is None:
+            return self._duty
+        self._duty = d
+        _sim_pwm(self._id, self._freq, self._duty)
+
+    def duty_u16(self, d=None):
+        if d is None:
+            return self._duty * 64
+        self._duty = d // 64
+        _sim_pwm(self._id, self._freq, self._duty)
+
+    def deinit(self):
+        _sim_pwm(self._id, 0, -1)
+`;
+const PY_TIME = `
+def sleep(s):
+    _sim_sleep(s * 1000)
+
+def sleep_ms(ms):
+    _sim_sleep(ms)
+
+def sleep_us(us):
+    _sim_sleep(us / 1000)
+
+def ticks_ms():
+    return _sim_ticks()
+
+def ticks_us():
+    return _sim_ticks() * 1000
+
+def ticks_diff(a, b):
+    return a - b
+
+def ticks_add(a, b):
+    return a + b
+
+def time():
+    return _sim_ticks() // 1000
+`;
+const VIRTUAL_FILES = {
+  'src/lib/machine.py': PY_MACHINE,
+  'src/lib/time.py': PY_TIME,
+  'src/lib/utime.py': PY_TIME
+};
+function skRead(path) {
+  if (VIRTUAL_FILES[path] !== undefined) return VIRTUAL_FILES[path];
+  if (path === 'src/lib/time.js' || !Sk.builtinFiles || Sk.builtinFiles.files[path] === undefined)
+    throw "File not found: '" + path + "'";
+  return Sk.builtinFiles.files[path];
+}
+
+let running = false, stopRequested = false, sleepCancel = null, t0 = 0, hint = '';
+
+function installBuiltins() {
+  const js = Sk.ffi.remapToJs, py = Sk.ffi.remapToPy, none = Sk.builtin.none.none$;
+  const fn = f => new Sk.builtin.func(f);
+  const state = id => {
+    const st = typeof id === 'number' ? gpioState[id] : undefined;
+    if (!st) {
+      hint = 'Hinweis: GPIO ' + id + ' gibt es auf diesem Board nicht. Die nutzbaren Nummern stehen an den Pins.';
+      throw new Sk.builtin.ValueError('invalid pin');
+    }
+    return st;
+  };
+  Sk.builtins._sim_pin_init = fn((id, mode, pull, value) => {
+    id = js(id); mode = js(mode); pull = js(pull); value = js(value);
+    const st = state(id);
+    if (mode === 3) {
+      if (INPUT_ONLY.has(id)) {
+        hint = 'Hinweis: GPIO ' + id + ' kann nur als Eingang verwendet werden.';
+        throw new Sk.builtin.ValueError('pin can only be input');
+      }
+      st.mode = 'out';
+    } else if (mode === 1) st.mode = 'in';
+    if (pull !== -1) st.pull = pull === 2 ? 'up' : pull === 1 ? 'down' : null;
+    if (value !== null && value !== undefined) st.value = value ? 1 : 0;
+    markDirty();
+    return py(id);
+  });
+  Sk.builtins._sim_pin_set = fn((id, v) => {
+    const st = state(js(id));
+    st.value = js(v) ? 1 : 0;
+    st.pwm = null;
+    markDirty();
+    return none;
+  });
+  Sk.builtins._sim_pin_get = fn(id => {
+    id = js(id);
+    const st = state(id);
+    return py(st.mode === 'out' ? st.value : readInput(id));
+  });
+  Sk.builtins._sim_pwm = fn((id, freq, duty) => {
+    id = js(id); duty = js(duty);
+    const st = state(id);
+    if (duty < 0) st.pwm = null;
+    else {
+      if (INPUT_ONLY.has(id)) throw new Sk.builtin.ValueError('pin can only be input');
+      st.mode = 'out';
+      st.pwm = { freq: js(freq), duty: Math.max(0, Math.min(1023, Math.round(duty))) };
+    }
+    markDirty();
+    return none;
+  });
+  Sk.builtins._sim_sleep = fn(ms => {
+    ms = Math.max(0, Number(js(ms)) || 0);
+    return Sk.misceval.promiseToSuspension(new Promise((resolve, reject) => {
+      const timer = setTimeout(() => { sleepCancel = null; resolve(none); }, ms);
+      sleepCancel = () => { clearTimeout(timer); sleepCancel = null; reject(new Error('gestoppt')); };
+    }));
+  });
+  Sk.builtins._sim_ticks = fn(() => py(Math.floor(performance.now() - t0)));
+}
+
+function showError(e) {
+  let text;
+  if (e && e.tp$name) {
+    let msg = '';
+    try { const a = Sk.ffi.remapToJs(e.args); if (a && a.length) msg = String(a[0]); } catch (_) {}
+    const tb = (e.traceback || []).filter(t => String(t.filename).indexOf('<stdin>') === 0);
+    errLine = tb.length ? tb[0].lineno : null;
+    text = e.tp$name + (msg ? ': ' + msg : '') + (errLine ? '  (Zeile ' + errLine + ')' : '');
+  } else text = String(e);
+  log(text + '\n', 'err');
+  if (hint) log(hint + '\n', 'info');
+  updateGutter();
+}
+
+function setRunning(r) {
+  running = r;
+  $('run').disabled = r;
+  $('state').textContent = r ? 'Programm läuft …' : 'bereit';
+}
+
+async function run() {
+  if (running) return;
+  if (typeof Sk === 'undefined') {
+    log('Der Python-Interpreter konnte nicht geladen werden (Internetverbindung prüfen).\n', 'err');
+    return;
+  }
+  if (!audioCtx) {
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if (AC) audioCtx = new AC();
+  }
+  if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
+  consoleEl.textContent = '';
+  errLine = null; hint = '';
+  updateGutter();
+  resetPins();
+  stopRequested = false;
+  t0 = performance.now();
+  setRunning(true);
+  Sk.configure({
+    output: s => log(s), read: skRead, __future__: Sk.python3, yieldLimit: 50,
+    inputfun: p => window.prompt(p), inputfunTakesPrompt: true
+  });
+  installBuiltins();
+  try {
+    await Sk.misceval.asyncToPromise(
+      () => Sk.importMainWithBody('<stdin>', false, codeEl.value, true),
+      { '*': () => { if (stopRequested) throw new Error('gestoppt'); } }
+    );
+    log('— Programm beendet —\n', 'info');
+  } catch (e) {
+    if (stopRequested) { log('— gestoppt —\n', 'info'); resetPins(); }
+    else showError(e);
+  } finally {
+    sleepCancel = null;
+    setRunning(false);
+  }
+}
+// Stopp wirkt wie der Reset-Knopf: Auch nach Programmende schaltet er alle Pins ab.
+function stop() {
+  if (!running) { resetPins(); return; }
+  stopRequested = true;
+  if (sleepCancel) sleepCancel();
+}
+$('run').onclick = run;
+$('stop').onclick = stop;
+$('sound').onclick = () => {
+  soundOn = !soundOn;
+  $('sound').textContent = 'Ton: ' + (soundOn ? 'an' : 'aus');
+  markDirty();
+};
+
+/* ---------- Beispiele ---------- */
+// Jedes Beispiel besteht aus Programm und Aufbau. Pins: 'pin:top:i' / 'pin:bot:i' (i = Position von links),
+// Löcher: 'h:Spalte:Reihe' (jeweils ab 0 gezählt). Taster brauchen nur die linke Spalte c.
+const EXAMPLES = [
+  {
+    name: 'Eingebaute LED blinkt',
+    code: DEFAULT_CODE,
+    parts: []
+  },
+  {
+    name: 'LED mit Vorwiderstand blinkt',
+    code:
+`from machine import Pin
+import time
+
+# Aufbau: GPIO 5 -> Widerstand -> LED -> GND
+led = Pin(5, Pin.OUT)
+
+while True:
+    led.on()
+    time.sleep(0.5)
+    led.off()
+    time.sleep(0.5)
+`,
+    parts: [
+      { type: 'wire', a: 'pin:bot:1', b: 'h:2:0', color: '#222831' },
+      { type: 'wire', a: 'pin:bot:7', b: 'h:8:0', color: '#dc2626' },
+      { type: 'res', a: 'h:8:3', b: 'h:4:3' },
+      { type: 'led', a: 'h:4:2', b: 'h:2:2', color: 'rot' }
+    ]
+  },
+  {
+    name: 'Summer per Taster',
+    code:
+`from machine import Pin, PWM
+import time
+
+# Aufbau: Taster zwischen GPIO 4 und GND,
+#         Summer zwischen GPIO 16 und GND
+taster = Pin(4, Pin.IN, Pin.PULL_UP)
+summer = PWM(Pin(16), freq=440, duty=0)
+
+while True:
+    if taster.value() == 0:    # Taster gedrückt
+        summer.duty(512)       # Ton an
+    else:
+        summer.duty(0)         # Ton aus
+    time.sleep_ms(10)
+`,
+    parts: [
+      { type: 'wire', a: 'pin:bot:1', b: 'h:2:0', color: '#222831' },
+      { type: 'wire', a: 'pin:bot:5', b: 'h:5:0', color: '#f97316' },
+      { type: 'wire', a: 'pin:bot:4', b: 'h:4:0', color: '#2563eb' },
+      { type: 'buz', a: 'h:5:2', b: 'h:2:2' },
+      { type: 'btn', c: 2 }
+    ]
+  }
+];
+
+function loadExample(ex) {
+  const untouched = !parts.length && EXAMPLES.some(e => e.code === codeEl.value);
+  if (!untouched && !confirm('Das Beispiel ersetzt dein Programm und deine Schaltung. Fortfahren?')) return;
+  if (running) stop();
+  cancelPending();
+  pressed.clear();
+  parts = ex.parts.map(p => Object.assign({ id: nextId++ }, p, p.type === 'btn' ? { a: 'h:' + p.c + ':4' } : {}));
+  codeEl.value = ex.code;
+  codeEl.scrollTop = 0;
+  consoleEl.textContent = '';
+  errLine = null;
+  resetPins();
+  save();
+  renderParts();
+  updateGutter();
+  say('Beispiel „' + ex.name + '“ geladen – mit „Start“ ausprobieren.');
+}
+(function () {
+  const sel = $('examples');
+  sel.add(new Option('Beispiel laden …', ''));
+  EXAMPLES.forEach((ex, i) => sel.add(new Option(ex.name, i)));
+  sel.onchange = () => {
+    if (sel.value !== '') loadExample(EXAMPLES[+sel.value]);
+    sel.value = '';
+  };
+})();
+
+/* ---------- Start ---------- */
+codeEl.value = load();
+resetPins();
+drawStatic();
+renderParts();
+setTool('wire');
+updateGutter();
+</script>
+</body>
+</html>
